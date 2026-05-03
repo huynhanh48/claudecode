@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "_comment": "Project-shared Claude Code settings — committed to the repo. MCP server definitions live in /.mcp.json. Per-user secrets (env vars referenced as ${VAR}) must be exported in your shell before launching Claude Code. See .claude/README.md.",
+
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": ["postgresql", "context7", "github", "fetch"],
+
+  "includeCoAuthoredBy": false,
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/check_secrets.sh" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/format_python.sh" }
+        ]
+      }
+    ]
+  },
+
+  "permissions": {
+    "allow": [
+      "Read(./**)",
+      "Bash(ruff *)",
+      "Bash(pytest *)",
+      "Bash(alembic *)",
+      "Bash(python -m *)",
+      "Bash(npx -y @lobehub/market-cli *)",
+      "Bash(npx -y skillfish *)",
+      "Bash(bash .claude/skills/fastapi/scripts/validate.sh*)",
+      "Bash(bash .claude/hooks/*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(grep *)",
+      "Bash(find . *)",
+      "Bash(ls *)",
+      "Bash(cat .env.example*)"
+    ],
+    "ask": [
+      "Bash(git push*)",
+      "Bash(git reset *)",
+      "Bash(git rebase *)",
+      "Bash(curl *)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./**/credentials*)",
+      "Read(./**/.lobehub-market/**)",
+      "Bash(rm -rf *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)"
+    ]
+  }
+}

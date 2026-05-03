@@ -1,0 +1,20 @@
+# Per-developer Claude Code overrides — must never be committed
+.claude/settings.local.json
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Lobehub marketplace credentials (per-machine)
+.lobehub-market/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor scratch
+.vscode/
+.idea/
+*.swp
+*~
