@@ -301,7 +301,9 @@ def _payload(**overrides):
     return base
 
 
-def test_create_book_returns_201_and_body(client):
+def test_create_book_returns_200_and_body(client):
+    # FastAPI returns 200 by default for POST unless the route declares
+    # status_code=201. Pick one and stay consistent across the project.
     response = client.post('/api/books/', json=_payload())
     assert response.status_code == 200
     body = response.json()
@@ -310,7 +312,13 @@ def test_create_book_returns_201_and_body(client):
 
 
 def test_create_book_validation_error_on_bad_year(client):
+    # year < 0 or > 9999 fails Field(ge=0, le=9999) → 422.
     response = client.post('/api/books/', json=_payload(year=-1))
+    assert response.status_code == 422
+
+
+def test_create_book_validation_error_on_missing_required(client):
+    response = client.post('/api/books/', json={'title': 'x'})
     assert response.status_code == 422
 
 

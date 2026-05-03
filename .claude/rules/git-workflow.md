@@ -1,5 +1,7 @@
 # Git workflow
 
+> **Any time the user asks for help with a commit, PR, or staged-diff review, activate the [`git-commit-helper`](../skills/git-commit-helper/SKILL.md) skill first.** It encodes this file as an actionable checklist (pre-flight → draft → checklist → commit) and keeps drafts on-format. This file remains the source of truth for the rules; the skill is the runner.
+
 ## Commit message
 
 ```

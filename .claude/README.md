@@ -45,19 +45,30 @@ Gitignored. Each developer's personal overrides live here — extra permissions 
 
 ### `rules/`
 
-The team's coding rulebook. One short file per topic:
+The team's coding rulebook. One short file per topic. Every rule is < 200 lines and uses YAML frontmatter `paths:` to **load only when Claude is working with matching files** — see [Claude Code path-specific rules](https://docs.claude.com/en/memory#path-specific-rules). This keeps the session context lean.
 
-| File | Topic |
-|------|-------|
-| [`rules/architecture.md`](rules/architecture.md) | Layered backend (routes → controllers → services → repositories → models) — non-negotiable. |
-| [`rules/coding-style.md`](rules/coding-style.md) | Type hints, naming, function size, no comments unless the *why* is non-obvious. |
-| [`rules/feature-development.md`](rules/feature-development.md) | Patterns-first workflow: consult `design-patterns` skill before coding. |
-| [`rules/testing.md`](rules/testing.md) | pytest, 80% coverage, TDD discipline. |
-| [`rules/security.md`](rules/security.md) | Secrets, input validation, OWASP basics, stop-the-line list. |
-| [`rules/git-workflow.md`](rules/git-workflow.md) | Conventional commits, branches, PR template. |
-| [`rules/using-context7.md`](rules/using-context7.md) | When to use the `context7` MCP for live library docs. |
+| File | Topic | Loaded when… |
+|------|-------|--------------|
+| [`rules/architecture.md`](rules/architecture.md) | Layered backend (routes → controllers → services → repositories → models) — non-negotiable. | editing `app/**/*.py`, `alembic/**`, `main.py`, `tests/**` |
+| [`rules/coding-style.md`](rules/coding-style.md) | Type hints, naming, function size, no comments unless the *why* is non-obvious. | editing any `**/*.py` |
+| [`rules/feature-development.md`](rules/feature-development.md) | Patterns-first workflow: consult `design-patterns` skill before coding. | always |
+| [`rules/testing.md`](rules/testing.md) | pytest, 80% coverage, TDD discipline. | editing `app/**`, `tests/**`, `main.py`, `pytest.ini`, `pyproject.toml` |
+| [`rules/security.md`](rules/security.md) | Secrets, input validation, OWASP basics, stop-the-line list. | editing `app/**`, `alembic/**`, `main.py`, `tests/**`, `.env*`, `Dockerfile`, `docker-compose*.yml` |
+| [`rules/git-workflow.md`](rules/git-workflow.md) | Conventional commits, branches, PR template. | always |
+| [`rules/using-context7.md`](rules/using-context7.md) | When to use the `context7` MCP for live library docs. | always |
 
 `/CLAUDE.md` (repo root) summarizes these for the assistant; the deeper detail lives here.
+
+To add new path-scoped rules, drop a markdown file under `rules/` (or any subdirectory — discovery is recursive) with this header:
+
+```yaml
+---
+paths:
+  - "src/api/**/*.py"
+---
+```
+
+Omit the frontmatter to load the rule unconditionally.
 
 ### `commands/`
 
@@ -69,6 +80,7 @@ Team slash commands. Each is a markdown file with frontmatter (`description`, `a
 | `/check-architecture` | Run `validate.sh` + `ruff` + `pytest` and report layered-architecture / style violations. |
 | `/find-pattern <problem description>` | Recommend a pattern (or *no* pattern) using the `design-patterns` skill. |
 | `/review [path]` | Review the working tree (or a path) against every rule file with severity-ranked findings. |
+| `/commit [--all] [scope hint]` | Pre-commit gate + draft a Conventional-Commit message via `git-commit-helper`. |
 
 ### `hooks/`
 
@@ -99,6 +111,7 @@ Auto-triggered, deeply documented capabilities.
 |-------|--------------|
 | [`skills/fastapi/`](skills/fastapi/) | "scaffold a FastAPI project", "add a CRUD resource", … |
 | [`skills/design-patterns/`](skills/design-patterns/) | "which pattern should I use", "refactor this code", "code smell", … |
+| [`skills/git-commit-helper/`](skills/git-commit-helper/) | **Any git-related request**: "viết commit", "write a commit message", "open a PR", staged-diff review. Enforces `rules/git-workflow.md`. |
 | [`skills/creator-skill/`](skills/creator-skill/) | "create a new skill", "tạo skill mới", … |
 
 ---
@@ -183,6 +196,44 @@ Then:
 The skills (`fastapi`, `design-patterns`, `creator-skill`) work in any Python / FastAPI project. The rules assume the layered architecture; if a project genuinely needs a different shape, fork the rule file and document why.
 
 ---
+
+## Memory and personal overrides
+
+Claude Code has two memory layers — see [the official memory docs](https://docs.claude.com/en/memory).
+
+### What's loaded into every session
+
+1. **`CLAUDE.md`** at the repo root — team-shared, committed (this project's is ~65 lines).
+2. **`.claude/rules/*.md`** — path-scoped rules (only the ones whose `paths:` glob matches files Claude opens).
+3. **`MEMORY.md`** in `~/.claude/projects/-Users-huynhanh-sdt-solution/memory/` — auto-memory Claude maintains itself (first 200 lines / 25 KB).
+4. **`CLAUDE.local.md`** at the repo root, *if you create it* — your personal, gitignored notes (sandbox URLs, test data, throwaway preferences). Already in `.gitignore` if you ran `/init`. To share personal notes across worktrees, import a file from your home dir instead: `@~/.claude/sdt-solution-prefs.md`.
+
+### Inspect / edit memory in a session
+
+- `/memory` — lists every CLAUDE.md / rules file currently loaded, lets you toggle auto memory, and opens the auto-memory folder.
+- `/init` — bootstraps a CLAUDE.md from the codebase or proposes improvements to the existing one. Set `CLAUDE_CODE_NEW_INIT=1` for the interactive multi-phase flow.
+
+### Debug "why isn't Claude following this rule?"
+
+Use the `InstructionsLoaded` hook to log exactly which instruction files load and when. Add to `.claude/settings.json` under `hooks` if you suspect a rule isn't matching. See the [official hook reference](https://docs.claude.com/en/hooks#instructionsloaded).
+
+### Monorepo / ancestor-CLAUDE.md noise
+
+If a parent directory has a `CLAUDE.md` from another team that shouldn't apply here, exclude it via `claudeMdExcludes` in `settings.local.json` (so the exclusion stays per-developer):
+
+```json
+{
+  "claudeMdExcludes": [
+    "/Users/<you>/some-monorepo/other-team/.claude/rules/**"
+  ]
+}
+```
+
+Managed-policy CLAUDE.md files (`/Library/Application Support/ClaudeCode/CLAUDE.md` on macOS) cannot be excluded.
+
+### Subagents
+
+Subagents (e.g. `agents/python-pro.md`) can keep their own auto memory across sessions if persistent memory is enabled — see the [subagent memory docs](https://docs.claude.com/en/sub-agents#enable-persistent-memory).
 
 ## Settings precedence (highest → lowest)
 

@@ -1,3 +1,11 @@
+---
+paths:
+  - "app/**/*.py"
+  - "alembic/**/*.py"
+  - "main.py"
+  - "tests/**/*.py"
+---
+
 # Architecture rule
 
 > **Every backend feature flows through five layers in this exact order. Skipping a layer is a defect, even if the layer is one line.**

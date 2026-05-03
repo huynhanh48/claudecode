@@ -1,3 +1,12 @@
+---
+paths:
+  - "tests/**/*.py"
+  - "app/**/*.py"
+  - "main.py"
+  - "pytest.ini"
+  - "pyproject.toml"
+---
+
 # Testing
 
 ## Framework

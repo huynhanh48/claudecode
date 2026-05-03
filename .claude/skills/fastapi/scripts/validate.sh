@@ -110,6 +110,22 @@ else
   ok "no hardcoded secret literals"
 fi
 
+# Raw HTTPException raised outside main.py — should always go through app/exception/.
+if grep -RIn --include='*.py' -E '\braise\s+HTTPException\b' app/ 2>/dev/null | grep -v __pycache__ >/dev/null; then
+  bad "raw HTTPException raised inside app/ — use the app/exception/ hierarchy instead"
+  grep -RIn --include='*.py' -E '\braise\s+HTTPException\b' app/ | grep -v __pycache__ | sed 's/^/        /'
+else
+  ok "no raw HTTPException usage in app/"
+fi
+
+# JSONResponse instantiated outside main.py — should be the global handler's job.
+if grep -RIn --include='*.py' -E '\bJSONResponse\(' app/ 2>/dev/null | grep -v __pycache__ >/dev/null; then
+  warn "JSONResponse() used inside app/ — prefer letting main.py's exception handler format errors"
+  grep -RIn --include='*.py' -E '\bJSONResponse\(' app/ | grep -v __pycache__ | sed 's/^/        /'
+else
+  ok "no JSONResponse() outside main.py"
+fi
+
 if [ -f ".env" ] && [ ! -f ".gitignore" ]; then
   bad ".env present but no .gitignore — add .gitignore that excludes .env"
 elif [ -f ".env" ] && ! grep -q -E '^\.env(\s|$)' .gitignore 2>/dev/null; then

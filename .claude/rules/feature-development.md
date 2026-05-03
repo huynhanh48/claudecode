@@ -1,6 +1,8 @@
 # Feature development workflow
 
 > **Patterns first, code second.** Before implementing any new feature or non-trivial refactor, consult [`.claude/skills/design-patterns/`](../skills/design-patterns/). The goal is to pick the simplest pattern that fits — *or none*.
+>
+> **Research before invention.** When the task is non-trivial: (1) fetch live library docs via the `context7` MCP — see [`using-context7.md`](using-context7.md); (2) use WebFetch / GitHub code search to find an adaptable open-source implementation; (3) prefer porting a battle-tested approach over hand-rolling.
 
 ## Required steps for every new feature
 
@@ -24,6 +26,17 @@ Trigger the `design-patterns` skill mentally — or invoke `/find-pattern` — a
   - "Undo / redo / replay" → **Command** + **Memento**.
   - "Complex query / request builder" → **Builder** (or just `@dataclass`).
 - **Pythonic alternative.** If the GoF pattern fits, also check [`python-idioms.md`](../skills/design-patterns/references/python-idioms.md) — Python often has a one-liner.
+- **Project-shaped scaling table.** The `fastapi` skill ships a [Scaling patterns](../skills/fastapi/SKILL.md#scaling-patterns-pick-the-simplest-one-that-solves-a-named-problem) table that maps common backend pain points (caching, retries, async side effects, integrations) to the simplest pattern *and the project layer it belongs in*. Use it as the starting point, not the end.
+
+### 2b. Live docs and prior art
+
+If the feature touches a library (FastAPI, SQLAlchemy 2.0, Pydantic v2, Alembic, ruff, pytest, JWT, Cloudinary, etc.):
+
+1. `resolve-library-id` → `query-docs` via the `context7` MCP. Cite the version you read.
+2. Run a quick GitHub code search (`gh search code` or the `github` MCP) for "<library> + <pattern>" — adopt the shape of a popular maintained example before diverging.
+3. Use WebFetch only after step 1 and 2 don't yield enough.
+
+Skip steps 1–3 only when the change is trivial or pure-business-logic (no library APIs).
 
 ### 3. Plan the layered implementation
 

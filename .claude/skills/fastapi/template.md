@@ -7,6 +7,7 @@ Copy these files verbatim when bootstrapping a new project. `<Resource>` / `<res
 ## `main.py`
 
 ```python
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -19,6 +20,8 @@ from app.exception import HttpException
 from app.models.base import Base
 from app.routes import RootRouter
 
+logger = logging.getLogger(__name__)
+
 
 def _bootstrap_database_schema() -> None:
     Base.metadata.create_all(bind=engine)
@@ -27,11 +30,11 @@ def _bootstrap_database_schema() -> None:
 def _run_startup_migrations() -> None:
     import alembic.config
 
-    print('Running DB migrations...')
+    logger.info('Running DB migrations')
     try:
         alembic.config.main(argv=['--raiseerr', 'upgrade', 'head'])
-    except Exception as exc:
-        print(f'Migration error: {exc}')
+    except Exception:
+        logger.exception('Migration error')
 
 
 @asynccontextmanager
@@ -52,9 +55,10 @@ async def http_exception_handler(request: Request, exc: HttpException):
 
 @app.exception_handler(SQLAlchemyError)
 async def sqlalchemy_exception_handler(request: Request, exc: SQLAlchemyError):
+    logger.exception('Unhandled SQLAlchemy error')
     return JSONResponse(
         status_code=500,
-        content={'message': 'Database error. Please try again later.', 'detail': str(exc)},
+        content={'message': 'Database error. Please try again later.'},
     )
 
 
@@ -66,6 +70,8 @@ if __name__ == '__main__':
 
     uvicorn.run('main:app', host='0.0.0.0', port=8000, reload=True)
 ```
+
+Note: the SQLAlchemy handler intentionally does **not** include `str(exc)` in the response body — leaking the raw SQL message can expose schema or PII. Log it server-side, return a generic message client-side. See `.claude/rules/security.md`.
 
 ---
 

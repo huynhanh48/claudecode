@@ -54,8 +54,6 @@
       "Bash(curl *)"
     ],
     "deny": [
-      "Read(./.env)",
-      "Read(./.env.*)",
       "Read(./**/credentials*)",
       "Read(./**/.lobehub-market/**)",
       "Bash(rm -rf *)",

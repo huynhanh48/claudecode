@@ -10,8 +10,10 @@ This file is auto-loaded by Claude Code at the start of every session. It tells 
 4. **Use Context7 for library docs.** Before using a third-party library API (FastAPI, SQLAlchemy, Pydantic, Alembic, etc.), invoke the `context7` MCP server to fetch current documentation — even for libraries you "know". See [`.claude/rules/using-context7.md`](.claude/rules/using-context7.md).
 5. **Skills are first-class.** Skills under `.claude/skills/` activate automatically on matching prompts:
    - `fastapi` — scaffold a project / add a CRUD resource (layered template + validate script).
-   - `design-patterns` — pick / apply a GoF pattern in idiomatic Python.
+   - `design-patterns` — pick / apply a GoF pattern in idiomatic Python; consult **before** any non-trivial feature or refactor.
+   - `git-commit-helper` — **always invoke for any git task** (commit message, PR body, staged-diff review, splitting commits). Encodes `.claude/rules/git-workflow.md` as a runner.
    - `creator-skill` — author a new skill.
+6. **Research before building.** For any new feature: (a) consult `design-patterns` for the simplest scalable pattern; (b) use the `context7` MCP for live library docs (FastAPI, SQLAlchemy 2.0, Pydantic v2, Alembic) — see [`.claude/rules/using-context7.md`](.claude/rules/using-context7.md); (c) use WebFetch / GitHub search to find adaptable open-source examples *before* hand-rolling. See [`.claude/rules/feature-development.md`](.claude/rules/feature-development.md).
 
 ## Project shape
 
@@ -57,7 +59,7 @@ This file is auto-loaded by Claude Code at the start of every session. It tells 
 
 ## Where to look next
 
-- [`.claude/rules/`](.claude/rules/) — the full rulebook (one short file per topic).
-- [`.claude/skills/`](.claude/skills/) — auto-triggered, deeply documented skills.
-- [`.claude/commands/`](.claude/commands/) — team slash commands (`/new-resource`, `/check-architecture`, `/find-pattern`).
-- [`.claude/README.md`](.claude/README.md) — how the `.claude/` directory itself is organized + MCP setup.
+- [`.claude/rules/`](.claude/rules/) — the full rulebook. **Path-scoped**: each rule's `paths:` frontmatter restricts it to matching files, so the session context stays lean. Run `/memory` to see what's currently loaded.
+- [`.claude/skills/`](.claude/skills/) — auto-triggered, deeply documented skills (`fastapi`, `design-patterns`, `git-commit-helper`, `creator-skill`).
+- [`.claude/commands/`](.claude/commands/) — team slash commands (`/new-resource`, `/check-architecture`, `/find-pattern`, `/commit`, `/review`).
+- [`.claude/README.md`](.claude/README.md) — how the `.claude/` directory itself is organized + MCP setup + memory / `CLAUDE.local.md` / `claudeMdExcludes`.

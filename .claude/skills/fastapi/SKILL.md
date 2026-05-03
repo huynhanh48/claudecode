@@ -7,6 +7,15 @@ description: Use this skill when scaffolding a new FastAPI backend or adding a n
 
 This skill produces backend code that follows the team's standard layered architecture. Use it whenever the user wants to (a) bootstrap a new FastAPI service, or (b) add a new resource/feature to an existing service that uses these conventions.
 
+## Before you write any code
+
+Run this preflight sequence — in order — for any non-trivial feature:
+
+1. **Read the existing layer.** Open at least one comparable resource end-to-end (e.g. `app/{models,schema,repositories,services,controllers,routes}/post.py`) to mirror the actual codebase style. Do not rely on this skill alone — code is the source of truth.
+2. **Consult `design-patterns`.** Open `.claude/skills/design-patterns/SKILL.md` and run the foundational check (KISS / SRP / Rule of Three / composition). For scale concerns, see the `Scaling patterns` table below — pick the simplest pattern that solves the *named* problem, not a hypothetical future one.
+3. **Fetch live library docs via Context7** for any non-trivial library API you're about to call (FastAPI dependency tree, SQLAlchemy 2.0 query API, Pydantic v2 validators, Alembic autogenerate quirks). See `.claude/rules/using-context7.md`. Two-step: `resolve-library-id` → `query-docs`.
+4. **Look for adaptable open-source examples** with WebFetch / GitHub code search before hand-rolling something non-trivial (rate limiting, S3 upload, OAuth, vector search, websocket presence). Prefer a battle-tested library; prefer porting a proven approach over inventing one.
+
 ## Layered architecture (mandatory)
 
 Every resource flows through these five layers in this exact order. Skipping a layer is not allowed — even if the layer is a one-line passthrough.
@@ -160,12 +169,13 @@ See `examples/sample.md` for a complete worked example (resource = `book`).
 
 ### Models (SQLAlchemy 2.0)
 
-- Inherit from `Base` and `DateTime` (mixin from `app/models/base.py`).
+- Inherit from `Base` and `DateTime` (mixin from `app/models/base.py`). Drop `DateTime` only when you genuinely don't need timestamps (rare).
 - Use `Mapped[T]` + `mapped_column(...)` exclusively. No legacy `Column(...)` syntax.
-- Foreign keys: `mapped_column(ForeignKey('<table>.id'), nullable=False)`.
-- Soft-delete: include `deleted: Mapped[bool] = mapped_column(default=False, nullable=False)`.
-- Use `relationship(..., back_populates=...)` on both sides.
-- Use `@observes('field')` for derived fields like slugs (only set if not already provided).
+- Foreign keys: `mapped_column(ForeignKey('<table>.id'), nullable=False)`. For self-referential parents, see `app/models/category.py` (`parent = relationship('Category', remote_side=[id], backref='children')`).
+- **Soft-delete by default**: include `deleted: Mapped[bool] = mapped_column(default=False, nullable=False)`. Hard-delete is opt-in (e.g. `app/models/category.py` omits `deleted`) — only choose it when GDPR / cascade requirements demand it; document the choice in the commit body.
+- Forward-referenced relationships: `Mapped['User'] = relationship('User', back_populates='posts')  # noqa: F821` matches the existing repo style.
+- Use `@observes('field')` (from `sqlalchemy_utils`) for derived fields like slugs. **Guard with "only set if not already provided"** to avoid clobbering custom slugs — see the `Post.title_observer` pattern in `app/models/post.py`.
+- One-to-one: `relationship(..., uselist=False)`. Cascade for owned children: `cascade='all, delete-orphan'` (e.g. `Post.embedding_record`).
 
 ### Schemas (Pydantic v2)
 
@@ -177,17 +187,21 @@ See `examples/sample.md` for a complete worked example (resource = `book`).
 ### Repositories
 
 - Constructor takes `db: Session`. No `Depends` here — services own the session.
-- Always filter soft-deleted rows: `.filter(<Model>.deleted.is_(False))`.
-- Use `selectinload(...)` for relationships you'll serialize to avoid N+1 queries.
+- If the model has `deleted`, *every* default reader filters it: `.filter(<Model>.deleted.is_(False))`. The hard-delete tail is exposed as a separate method (`get_deleted_*`, `restore_*`, `hard_delete_*`) — see `app/repositories/post.py` for the pattern.
+- Use `selectinload(...)` for any relationship the caller will serialize. Pre-loading every column-then-relation avoids the N+1 trap visible in `app/repositories/post.py` (`selectinload(Post.thumbnails), selectinload(Post.category)`).
 - Order lists by `desc(<Model>.created_at)` unless the caller asks otherwise.
+- For partial-text search use `.ilike(f'%{value.strip()}%')` after a `(value or '').strip()` guard, so empty queries don't return everything by accident.
 - Return ORM instances or `None`; never raise HTTP exceptions from a repository.
+- Pagination: accept `skip: int = 0, limit: int = 100` parameters; let the caller apply Pydantic-validated bounds.
 
 ### Services
 
-- Constructor: `def __init__(self, db: Session = Depends(get_db))`. Build repositories inside `__init__`.
-- Translate "not found" into `raise NotFoundException(message='<Resource> not found')`.
-- Convert ORM → Pydantic at the service boundary: `return <Resource>Response.model_validate(orm)`.
-- Long-running side effects (embeddings, external APIs) belong here, not in controllers.
+- Constructor: `def __init__(self, db: Session = Depends(get_db))`. Build repositories inside `__init__` (`self.repo = <Resource>Repository(db=self.db)`).
+- Translate "not found" into `raise NotFoundException(message='<Resource> not found')`. Reuse the five exception classes — never invent a new one for a one-off case.
+- Convert ORM → Pydantic at the service boundary: `return <Resource>Response.model_validate(orm)`. **Do not return ORM instances from a service** — `app/services/category.py` is a known violation; new services should follow `app/services/contact.py` instead.
+- For collections: `[<Resource>Response.model_validate(item) for item in self.repo.get_all(...)]`.
+- Long-running side effects (embeddings, external APIs, ML inference) belong here, not in controllers. Wrap them in a private `_method` and call from a public method that also returns the response. See `PostService` for a real example.
+- When you need another resource's logic, inject another *service* via `Depends`, not its repository directly. Repository-from-service composition becomes a rats' nest fast.
 
 ### Controllers
 
@@ -197,10 +211,14 @@ See `examples/sample.md` for a complete worked example (resource = `book`).
 
 ### Routes
 
-- One `APIRouter` per resource: `<resource>Router = APIRouter(tags=['<resources>'])`.
+- One `APIRouter` per resource. Two naming styles exist in this repo — **prefer the explicit-name form** for new code:
+  - **Preferred**: `<resource>Router = APIRouter(tags=['<resources>'])` and `from app.routes.<resource> import <resource>Router` in `routes/__init__.py`. Used by `routes/post.py`, `routes/auth.py`.
+  - Tolerated alternative: `router = APIRouter(...)` + `from .<resource> import router as <resource>Router`. Used by older modules (`routes/category.py`, `routes/topic.py`). Don't change them just to rename — only enforce the new form on greenfield routers.
 - Every operation declares `response_model`, `summary`, and (for non-trivial endpoints) `description`.
-- Authentication: add `current_user: UserResponse = Depends(get_current_user_dependency)` to mutating endpoints.
-- Background work: inject `background_tasks: BackgroundTasks` and call `background_tasks.add_task(...)`.
+- Authentication: import `from app.routes.auth import get_current_user_dependency`. Add `current_user: UserResponse = Depends(get_current_user_dependency)` to every mutating endpoint.
+- Admin-only: use `Depends(get_admin_user_dependency)` (same module). Don't re-implement role checks inside the route body.
+- Background work: inject `background_tasks: BackgroundTasks` and call `background_tasks.add_task(fn, *args)`. Avoid bare `asyncio.create_task` from a request handler — the task can outlive the response and crash silently.
+- Avoid eager top-level side effects in route modules (e.g. `cloudinary.config(...)` at import time). Move config to `app/core/` and call from inside the function that needs it, so tests can import the route without env requirements.
 
 ### Exceptions
 
@@ -225,6 +243,27 @@ Before reporting the task complete, ensure all of these pass:
 - [ ] Tests exist and cover happy path + 404 + validation error for the new resource.
 - [ ] `ruff check .` passes (run `scripts/validate.sh`).
 - [ ] `alembic upgrade head` succeeds against a clean DB.
+
+## Scaling patterns (pick the simplest one that solves a *named* problem)
+
+Before introducing any of these, run the principle check from `.claude/skills/design-patterns/SKILL.md` (KISS / SRP / Rule of Three / composition). If duplication < 3 cases or no concrete pain point exists, **don't** introduce the pattern.
+
+| Pain point in this project | Pattern (simplest first) | Where it lives |
+|---|---|---|
+| Same query path is hot and dominates DB load | `@functools.lru_cache` on a pure helper, *or* a small `Cache` decorator wrapping the **service** method (not the repository — keep cache invalidation logic next to the business rule) | `app/services/<r>.py` (decorator from `app/lib/`) |
+| External integration (Cloudinary, LightRAG, OpenAI) has wrong shape | **Adapter** in `app/integrations/<vendor>.py` exposing a project-shaped interface; service depends on the adapter | `app/integrations/` |
+| Multiple variants of "send a notification" / "process a payment" | **Strategy** as a `Protocol`, or — preferred in Python — a callable injected via `Depends`; pick at request boundary | `app/services/<r>.py` |
+| Request-scoped cross-cutting (audit log, request id, timing) | **FastAPI dependency** that yields a value; or a Starlette **middleware** for things that span the full request | `app/middlewares/` or `Depends(...)` |
+| Heavy IO that must not block the response (embeddings, image variants) | **`BackgroundTasks`** (in-process); promote to a queue (Celery / arq / RQ) only when retries / multi-host become real needs | route → service |
+| Workflow with branching states (chat session, document ingest) | **State** machine — class per state, transitions return the next state | `app/services/<r>.py` |
+| One-call wrapper around a 50-method SDK (e.g. boto3) | **Facade** in `app/integrations/<vendor>.py` | `app/integrations/` |
+| Complex search filter object | `@dataclass(frozen=True)` query spec passed into the repo (Builder is overkill for typical CRUD) | `app/repositories/<r>.py` arg type |
+| One observer per side effect grows to many | Promote the side-effect notification to **Observer** via `blinker`, *only when* you have ≥ 3 subscribers and ordering doesn't matter | `app/lib/signals.py` |
+| Recurring "find resource or 404" | Stay duplicated. Service-level `_get_or_404` is fine; do not invent a generic `EntityFinder<T>` framework |  — |
+
+### When in doubt
+
+Default order of preference: **plain function** → **`@dataclass`** → **`Protocol` + injection** → **decorator** → **GoF pattern**. A new GoF participant inside `app/` should be justified in the commit body (per `.claude/rules/feature-development.md`).
 
 ## What NOT to do
 

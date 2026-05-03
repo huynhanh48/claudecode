@@ -1,3 +1,14 @@
+---
+paths:
+  - "app/**/*.py"
+  - "alembic/**/*.py"
+  - "main.py"
+  - "tests/**/*.py"
+  - ".env*"
+  - "Dockerfile"
+  - "docker-compose*.yml"
+---
+
 # Security
 
 ## Secrets

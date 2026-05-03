@@ -1,3 +1,8 @@
+---
+paths:
+  - "**/*.py"
+---
+
 # Coding style
 
 > **Short, explicit, and boring.** Reading speed beats writing cleverness.
