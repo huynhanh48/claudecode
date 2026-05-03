@@ -1,0 +1,150 @@
+name: validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need history for the secret-scan diff
+
+      - name: Validate JSON
+        run: |
+          set -e
+          fail=0
+          for f in $(find . -path ./.git -prune -o -name '*.json' -print) \
+                   $(find . -path ./.git -prune -o -name '*.skillfish.json' -print); do
+            python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$f" \
+              && echo "  ok  $f" \
+              || { echo "  BAD $f"; fail=1; }
+          done
+          exit $fail
+
+      - name: Validate shell syntax
+        run: |
+          set -e
+          fail=0
+          for f in $(find .claude -name '*.sh' -type f); do
+            bash -n "$f" && echo "  ok  $f" || { echo "  BAD $f"; fail=1; }
+          done
+          exit $fail
+
+      - name: Validate hook scripts are executable
+        run: |
+          set -e
+          fail=0
+          for f in $(find .claude/hooks -name '*.sh' -type f 2>/dev/null); do
+            if [ -x "$f" ]; then
+              echo "  ok  $f"
+            else
+              echo "  BAD $f (not executable; run: chmod +x $f)"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: Validate SKILL.md frontmatter
+        run: |
+          set -e
+          fail=0
+          for f in $(find .claude/skills -name 'SKILL.md' -type f); do
+            head -1 "$f" | grep -q '^---$' \
+              && grep -q '^name:' "$f" \
+              && grep -q '^description:' "$f" \
+              && echo "  ok  $f" \
+              || { echo "  BAD $f (missing frontmatter / name / description)"; fail=1; }
+          done
+          exit $fail
+
+      - name: Validate slash command frontmatter
+        run: |
+          set -e
+          fail=0
+          for f in $(find .claude/commands -name '*.md' -type f); do
+            head -1 "$f" | grep -q '^---$' \
+              && grep -q '^description:' "$f" \
+              && echo "  ok  $f" \
+              || { echo "  BAD $f (missing frontmatter / description)"; fail=1; }
+          done
+          exit $fail
+
+      - name: Validate agent frontmatter
+        run: |
+          set -e
+          fail=0
+          for f in $(find .claude/agents -name '*.md' -type f 2>/dev/null); do
+            head -1 "$f" | grep -q '^---$' \
+              && grep -q '^name:' "$f" \
+              && grep -q '^description:' "$f" \
+              && echo "  ok  $f" \
+              || { echo "  BAD $f (missing frontmatter / name / description)"; fail=1; }
+          done
+          exit $fail
+
+      - name: Smoke-test hooks
+        run: |
+          set -e
+
+          # clean payload → exit 0
+          printf '%s' '{"tool_input":{"content":"hello world"}}' \
+            | bash .claude/hooks/check_secrets.sh
+
+          # AWS-key-shaped payload → exit 2 (build fixture at runtime so this YAML
+          # source itself doesn't match the secret regex).
+          fake="$(printf 'A%sIA' 'K')ABCDEFGHIJKLMNOP"
+          set +e
+          printf '{"tool_input":{"content":"%s"}}' "$fake" \
+            | bash .claude/hooks/check_secrets.sh
+          rc=$?
+          set -e
+          if [ "$rc" != "2" ]; then
+            echo "  BAD check_secrets.sh did not block AWS-key shape (exit=$rc)"
+            exit 1
+          fi
+
+          # format_python.sh on a missing file path → no-op, exit 0
+          printf '%s' '{"tool_input":{"file_path":""}}' \
+            | bash .claude/hooks/format_python.sh
+
+          echo "  ok  hook smoke tests"
+
+      - name: Secret scan
+        run: |
+          set -e
+          # Whole-tree scan on push, diff scan on PR.
+          base="${{ github.event.pull_request.base.sha }}"
+          head_sha="${{ github.sha }}"
+          if [ -z "$base" ]; then
+            files=$(git ls-files)
+          else
+            files=$(git diff --name-only "$base" "$head_sha")
+          fi
+          [ -z "$files" ] && { echo "  no files to scan"; exit 0; }
+
+          patterns='(AKIA[0-9A-Z]{16})|(-----BEGIN (RSA|OPENSSH|EC|DSA|PGP) PRIVATE KEY-----)|(eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})|(ghp_[A-Za-z0-9]{36})|(github_pat_[A-Za-z0-9_]{60,})|(sk-[A-Za-z0-9]{40,})|(xox[baprs]-[A-Za-z0-9-]{10,})'
+
+          fail=0
+          for f in $files; do
+            [ -f "$f" ] || continue
+            # Skip the workflow itself and the hook script — both legitimately
+            # contain pattern definitions, not secrets.
+            case "$f" in
+              .github/workflows/validate.yml) continue ;;
+              .claude/hooks/check_secrets.sh) continue ;;
+            esac
+            if grep -qE "$patterns" "$f"; then
+              echo "  BAD  secret-shaped literal in $f"
+              fail=1
+            fi
+          done
+          exit $fail

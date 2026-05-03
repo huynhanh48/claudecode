@@ -37,7 +37,15 @@ Reusable [Claude Code](https://claude.com/claude-code) configuration for **Pytho
 
 ## Install into a new project
 
-From the new project root:
+### One-liner (recommended)
+
+```sh
+bash <(curl -fsSL https://raw.githubusercontent.com/huynhanh48/claudecode/main/install.sh)
+```
+
+This clones the repo to a temp dir, copies `.claude/`, `.mcp.json`, and `CLAUDE.md` into the current directory, marks hooks executable, and appends the right entries to `.gitignore`. Re-running is idempotent (it skips files that already exist). Add `--update` to overwrite, `--dest path/to/project` to install elsewhere, `--tag <ref>` to pin a version. See `install.sh --help`.
+
+### Manual install
 
 ```sh
 git clone --depth 1 https://github.com/huynhanh48/claudecode.git /tmp/claudecode-template
@@ -53,7 +61,11 @@ Add to your project's `.gitignore`:
 .claude/settings.local.json
 .env
 .env.*
+!.env.example
+.lobehub-market/
 ```
+
+(The one-liner does this for you.)
 
 Then export the three env vars in your shell (`~/.zshrc` / `~/.bashrc`):
 
@@ -75,7 +87,26 @@ All four MCP servers should report **connected**.
 
 - The rules and skills assume the layered FastAPI architecture (`app/` → `routes/controllers/services/repositories/models`). If your project has a different shape, fork the affected rule file and document why.
 - If your project uses `uv` / `poetry` / `pdm` instead of `pip`, add the matching pattern to `.claude/settings.json` `permissions.allow` (e.g. `"Bash(uv *)"`).
-- Per-developer overrides go in `.claude/settings.local.json` (gitignored).
+- **Per-developer overrides** go in `.claude/settings.local.json` (gitignored). A heavily-commented starter is shipped at `.claude/settings.local.json.example` — copy it and edit:
+
+  ```sh
+  cp .claude/settings.local.json.example .claude/settings.local.json
+  ```
+
+  The local file *adds to* the project-shared `settings.json` (it doesn't replace it). Use it for personal model preference, extra tool permissions, your own hooks, and any env vars you'd rather not commit.
+
+## Continuous integration
+
+This repo runs `.github/workflows/validate.yml` on every push and pull request. The job verifies:
+
+- All JSON files parse.
+- All shell scripts pass `bash -n`.
+- All hook scripts are executable.
+- Every `SKILL.md`, slash command, and agent has the required frontmatter (`name`, `description`).
+- The hooks themselves work (smoke test: clean payload passes; AWS-key-shaped payload is blocked).
+- No secret-shaped literal sneaks into a committed file.
+
+If you fork this template, the workflow runs unchanged on your fork.
 
 ## What this is *not*
 

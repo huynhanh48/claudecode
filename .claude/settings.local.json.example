@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "_comment_purpose": "PER-DEVELOPER overrides — copy this file to .claude/settings.local.json and edit. settings.local.json is gitignored. Values here merge ON TOP OF .claude/settings.json (project-shared) and ~/.claude/settings.json (your global). Permissions are additive across all three layers.",
+
+  "_comment_includeCoAuthoredBy": "Set to true if you want Claude trailers in commits you make through Claude Code. Project default is false.",
+  "includeCoAuthoredBy": false,
+
+  "_comment_model": "Override the model for THIS project only. Useful if you want to default to Sonnet here but Opus globally (or vice versa). Remove this key to inherit the global / built-in default.",
+  "model": "claude-opus-4-7",
+
+  "_comment_permissions": "These ADD TO the project-shared allow/ask/deny lists. Use this to grant yourself extra latitude in your local sandbox without changing what the team commits.",
+  "permissions": {
+    "allow": [
+      "Bash(uv *)",
+      "Bash(poetry *)",
+      "Bash(docker compose *)",
+      "Bash(make *)"
+    ],
+    "ask": [
+      "Bash(rm *)"
+    ],
+    "deny": []
+  },
+
+  "_comment_hooks": "Hooks here APPEND to the project hooks — they don't replace them. Use this to wire up your own pre/post-tool automations (e.g. auto-run mypy on edited Python files).",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo edited >> $HOME/.claude-edits.log"
+          }
+        ]
+      }
+    ]
+  },
+
+  "_comment_env": "Extra environment variables exposed to tool calls and MCP servers. Don't put secrets here — the file is local-only but still on disk; export from your shell instead.",
+  "env": {
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+
+  "_comment_outputStyle": "Pick a built-in or custom output style. See https://docs.claude.com/en/docs/claude-code/output-styles",
+  "outputStyle": "default"
+}
