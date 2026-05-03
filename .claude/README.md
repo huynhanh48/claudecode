@@ -125,7 +125,7 @@ Auto-triggered, deeply documented capabilities.
 | `postgresql` | `@modelcontextprotocol/server-postgres` | `POSTGRES_CONNECTION_STRING` | Query the project's PostgreSQL database from Claude. |
 | `context7` | `@upstash/context7-mcp@latest` | `CONTEXT7_API_KEY` | Live, version-pinned library docs. |
 | `github` | `@modelcontextprotocol/server-github` | `GITHUB_PERSONAL_ACCESS_TOKEN` | Repo, issue, PR, review operations. |
-| `fetch` | `@modelcontextprotocol/server-fetch` | _(none)_ | Fetch arbitrary URLs. |
+| `fetch` | `mcp-server-fetch` (via `uvx`) | _(none)_ | Fetch arbitrary URLs. Requires [`uv`](https://docs.astral.sh/uv/) installed. |
 
 `settings.json` lists all four under `enabledMcpjsonServers` so they boot automatically.
 

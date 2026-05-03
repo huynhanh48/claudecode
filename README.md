@@ -67,6 +67,11 @@ Add to your project's `.gitignore`:
 
 (The one-liner does this for you.)
 
+### Prerequisites
+
+- **Node.js** (for `npx`) — runs `postgresql`, `context7`, `github` MCP servers.
+- **[`uv`](https://docs.astral.sh/uv/getting-started/installation/)** (for `uvx`) — runs the `fetch` MCP server. Install with `curl -LsSf https://astral.sh/uv/install.sh | sh`.
+
 Then export the three env vars in your shell (`~/.zshrc` / `~/.bashrc`):
 
 ```sh
@@ -81,7 +86,7 @@ Verify:
 claude mcp list
 ```
 
-All four MCP servers should report **connected**.
+All four MCP servers should report **connected**. If `fetch` fails, confirm `uvx --version` works in your shell.
 
 ## Customizing per project
 
