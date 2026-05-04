@@ -57,7 +57,9 @@ If the sketch breaks the layering rules, the design is wrong — fix it before c
 
 ### 5. Implement bottom-up
 
-Order: model → schema → repository → service → controller → route. Each layer should be < 50 lines per method. Run the test after each layer to keep the diagnostic surface small.
+Order: model → schema → repository → service → route. Each layer should be < 50 lines per method. Run the test after each layer to keep the diagnostic surface small.
+
+> Five files, not six. The team removed the `app/controllers/` layer in favor of the FastAPI-idiomatic `route → service` flow. The route handler *is* the controller — see [`architecture.md`](architecture.md).
 
 ### 6. Wire and migrate
 

@@ -27,20 +27,9 @@ def _bootstrap_database_schema() -> None:
     Base.metadata.create_all(bind=engine)
 
 
-def _run_startup_migrations() -> None:
-    import alembic.config
-
-    logger.info('Running DB migrations')
-    try:
-        alembic.config.main(argv=['--raiseerr', 'upgrade', 'head'])
-    except Exception:
-        logger.exception('Migration error')
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _bootstrap_database_schema()
-    _run_startup_migrations()
     yield
 
 
@@ -62,6 +51,15 @@ async def sqlalchemy_exception_handler(request: Request, exc: SQLAlchemyError):
     )
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception('Unhandled exception')
+    return JSONResponse(
+        status_code=500,
+        content={'message': 'Internal server error'},
+    )
+
+
 app.include_router(RootRouter)
 
 
@@ -71,11 +69,45 @@ if __name__ == '__main__':
     uvicorn.run('main:app', host='0.0.0.0', port=8000, reload=True)
 ```
 
-Note: the SQLAlchemy handler intentionally does **not** include `str(exc)` in the response body — leaking the raw SQL message can expose schema or PII. Log it server-side, return a generic message client-side. See `.claude/rules/security.md`.
+The three handlers are intentional:
+
+- **`HttpException`** (domain hierarchy from `app/exception/`) → JSON with the safe `message` field set by the service.
+- **`SQLAlchemyError`** → generic 500. Server-side log only. **Never** include `str(exc)` in the response — DB messages can leak schema or PII.
+- **`Exception`** → catch-all 500. This is what makes `try/except Exception` in services redundant: any uncaught exception lands here, gets logged with traceback, and returns a generic message.
 
 ---
 
 ## `app/core/config.py`
+
+Two flavors. Pick **A** for SQLite / local-file deployments, **B** for Postgres.
+
+### A) SQLite-friendly default (single-file deployment)
+
+```python
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file='.env', extra='ignore')
+
+    JWT_SECRET_KEY: str
+    JWT_ALGORITHM: str = 'HS256'
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+
+    DATABASE_URL: str = 'sqlite:///./app.db'
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+
+
+settings = get_settings()
+```
+
+### B) Postgres with composed URL
 
 ```python
 from functools import lru_cache
@@ -88,12 +120,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')
 
-    # Auth
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = 'HS256'
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
-    # Database
     DATABASE_URL: str = ''
     POSTGRES_HOST: str = 'localhost'
     POSTGRES_PORT: int = 5432
@@ -117,7 +147,7 @@ class Settings(BaseSettings):
         return self
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     return Settings()
 
@@ -130,7 +160,7 @@ settings = get_settings()
 ## `app/core/__init__.py`
 
 ```python
-from .config import settings, get_settings
+from .config import get_settings, settings
 
 __all__ = ['settings', 'get_settings']
 ```
@@ -153,7 +183,11 @@ from app.core import settings
 
 logger = logging.getLogger(__name__)
 
-engine = create_engine(settings.DATABASE_URL)
+connect_args: dict = (
+    {'check_same_thread': False} if settings.DATABASE_URL.startswith('sqlite') else {}
+)
+
+engine = create_engine(settings.DATABASE_URL, connect_args=connect_args, future=True)
 session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
@@ -214,12 +248,12 @@ class InternalServerErrorException(HttpException):
 
 ```python
 from .httpexception import (
-    HttpException,
     BadRequestException,
-    UnauthorizedException,
     ForbiddenException,
-    NotFoundException,
+    HttpException,
     InternalServerErrorException,
+    NotFoundException,
+    UnauthorizedException,
 )
 
 __all__ = [
@@ -237,7 +271,6 @@ __all__ = [
 ## `app/models/base.py`
 
 ```python
-import enum
 from datetime import datetime
 
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -252,12 +285,6 @@ class DateTime:
     updated_at: Mapped[datetime] = mapped_column(
         nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
     )
-
-
-class Role(enum.Enum):
-    ADMIN = 'admin'
-    USER = 'user'
-    STAFF = 'staff'
 ```
 
 ---
@@ -284,21 +311,18 @@ def verify_password(plaintext_password: str, hashed_password: str) -> bool:
 
 ```python
 from datetime import datetime, timedelta
-from typing import Optional
 
 import jwt
 
 from app.core import settings
-from app.exception import (
-    InternalServerErrorException,
-    NotFoundException,
-    UnauthorizedException,
-)
+from app.exception import UnauthorizedException
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
+    expire = datetime.utcnow() + (
+        expires_delta or timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
     to_encode.update({'exp': expire})
     return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
@@ -309,12 +333,12 @@ def decode_access_token(token: str) -> dict:
             token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
         )
         if payload.get('sub') is None:
-            raise NotFoundException(message='subject not found in token')
+            raise UnauthorizedException(message='Subject not found in token')
         return payload
-    except jwt.ExpiredSignatureError:
-        raise UnauthorizedException(message='Token has expired')
-    except jwt.InvalidTokenError:
-        raise InternalServerErrorException(message='Invalid token')
+    except jwt.ExpiredSignatureError as e:
+        raise UnauthorizedException(message='Token has expired') from e
+    except jwt.InvalidTokenError as e:
+        raise UnauthorizedException(message='Invalid token') from e
 ```
 
 ---
@@ -331,49 +355,6 @@ __all__ = [
     'create_access_token',
     'decode_access_token',
 ]
-```
-
----
-
-## `app/middlewares/authorization.py`
-
-```python
-from fastapi import Request
-from starlette.middleware.base import BaseHTTPMiddleware
-
-from app.db.database import get_db
-from app.exception import UnauthorizedException
-
-
-class AuthMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, protected_paths=None):
-        super().__init__(app)
-        self.protected_paths = tuple(protected_paths or ())
-
-    async def dispatch(self, request: Request, call_next):
-        path = request.url.path
-        if not any(path.startswith(p) for p in self.protected_paths):
-            return await call_next(request)
-
-        auth_header = request.headers.get('Authorization')
-        if not auth_header or not auth_header.startswith('Bearer '):
-            raise UnauthorizedException(message='Token is missing')
-
-        token = auth_header.split(' ', 1)[1].strip()
-        if not token:
-            raise UnauthorizedException(message='Token is missing')
-
-        # Resolve user via the DB session and attach to request.state.
-        db_gen = get_db()
-        db = next(db_gen)
-        try:
-            # from app.services.user import UserService
-            # request.state.user = UserService(db=db).get_user(token=token)
-            ...
-        finally:
-            db_gen.close()
-
-        return await call_next(request)
 ```
 
 ---
@@ -417,25 +398,24 @@ class <Resource>(Base, DateTime):
 
 ```python
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel
 
 
 class <Resource>Create(BaseModel):
     name: str
-    description: Optional[str] = None
+    description: str | None = None
 
 
 class <Resource>Update(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
+    name: str | None = None
+    description: str | None = None
 
 
 class <Resource>Response(BaseModel):
     id: int
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     deleted: bool
     created_at: datetime
     updated_at: datetime
@@ -446,8 +426,6 @@ class <Resource>Response(BaseModel):
 ### `app/repositories/<resource>.py`
 
 ```python
-from typing import List, Optional
-
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
@@ -459,7 +437,7 @@ class <Resource>Repository:
     def __init__(self, db: Session):
         self.db = db
 
-    def get_all(self, skip: int = 0, limit: int = 100) -> List[<Resource>]:
+    def get_all(self, skip: int = 0, limit: int = 100) -> list[<Resource>]:
         return (
             self.db.query(<Resource>)
             .filter(<Resource>.deleted.is_(False))
@@ -469,7 +447,7 @@ class <Resource>Repository:
             .all()
         )
 
-    def get_by_id(self, id_: int) -> Optional[<Resource>]:
+    def get_by_id(self, id_: int) -> <Resource> | None:
         return (
             self.db.query(<Resource>)
             .filter(<Resource>.id == id_, <Resource>.deleted.is_(False))
@@ -483,7 +461,7 @@ class <Resource>Repository:
         self.db.refresh(instance)
         return instance
 
-    def update(self, id_: int, data: <Resource>Update) -> Optional[<Resource>]:
+    def update(self, id_: int, data: <Resource>Update) -> <Resource> | None:
         instance = self.get_by_id(id_)
         if not instance:
             return None
@@ -493,7 +471,7 @@ class <Resource>Repository:
         self.db.refresh(instance)
         return instance
 
-    def delete(self, id_: int) -> Optional[<Resource>]:
+    def delete(self, id_: int) -> <Resource> | None:
         instance = self.get_by_id(id_)
         if not instance:
             return None
@@ -505,8 +483,6 @@ class <Resource>Repository:
 ### `app/services/<resource>.py`
 
 ```python
-from typing import List
-
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
@@ -521,7 +497,7 @@ class <Resource>Service:
         self.db = db
         self.repository = <Resource>Repository(db=self.db)
 
-    def get_all(self, skip: int = 0, limit: int = 100) -> List[<Resource>Response]:
+    def get_all(self, skip: int = 0, limit: int = 100) -> list[<Resource>Response]:
         return [
             <Resource>Response.model_validate(item)
             for item in self.repository.get_all(skip=skip, limit=limit)
@@ -548,71 +524,40 @@ class <Resource>Service:
         return {'message': '<Resource> deleted'}
 ```
 
-### `app/controllers/<resource>.py`
-
-```python
-from fastapi import Depends
-
-from app.schema.<resource> import <Resource>Create, <Resource>Update
-from app.services.<resource> import <Resource>Service
-
-
-class <Resource>Controller:
-    def __init__(self, service: <Resource>Service = Depends()):
-        self.service = service
-
-    def get_all(self, skip: int = 0, limit: int = 100):
-        return self.service.get_all(skip=skip, limit=limit)
-
-    def get_by_id(self, id_: int):
-        return self.service.get_by_id(id_)
-
-    def create(self, data: <Resource>Create):
-        return self.service.create(data)
-
-    def update(self, id_: int, data: <Resource>Update):
-        return self.service.update(id_, data)
-
-    def delete(self, id_: int):
-        return self.service.delete(id_)
-```
-
 ### `app/routes/<resource>.py`
 
 ```python
-from typing import List
-
 from fastapi import APIRouter, Depends
 
-from app.controllers.<resource> import <Resource>Controller
 from app.schema.<resource> import <Resource>Create, <Resource>Response, <Resource>Update
+from app.services.<resource> import <Resource>Service
 
 <resource>Router = APIRouter(tags=['<resources>'])
 
 
-@<resource>Router.get('/', response_model=List[<Resource>Response], summary='List <resources>')
-def list_<resources>(skip: int = 0, limit: int = 100, controller: <Resource>Controller = Depends()):
-    return controller.get_all(skip=skip, limit=limit)
+@<resource>Router.get('/', response_model=list[<Resource>Response], summary='List <resources>')
+def list_<resources>(skip: int = 0, limit: int = 100, service: <Resource>Service = Depends()):
+    return service.get_all(skip=skip, limit=limit)
 
 
 @<resource>Router.get('/{id_}', response_model=<Resource>Response, summary='Get <resource> by id')
-def get_<resource>(id_: int, controller: <Resource>Controller = Depends()):
-    return controller.get_by_id(id_)
+def get_<resource>(id_: int, service: <Resource>Service = Depends()):
+    return service.get_by_id(id_)
 
 
 @<resource>Router.post('/', response_model=<Resource>Response, summary='Create <resource>')
-def create_<resource>(data: <Resource>Create, controller: <Resource>Controller = Depends()):
-    return controller.create(data)
+def create_<resource>(data: <Resource>Create, service: <Resource>Service = Depends()):
+    return service.create(data)
 
 
 @<resource>Router.put('/{id_}', response_model=<Resource>Response, summary='Update <resource>')
-def update_<resource>(id_: int, data: <Resource>Update, controller: <Resource>Controller = Depends()):
-    return controller.update(id_, data)
+def update_<resource>(id_: int, data: <Resource>Update, service: <Resource>Service = Depends()):
+    return service.update(id_, data)
 
 
 @<resource>Router.delete('/{id_}', summary='Delete <resource>')
-def delete_<resource>(id_: int, controller: <Resource>Controller = Depends()):
-    return controller.delete(id_)
+def delete_<resource>(id_: int, service: <Resource>Service = Depends()):
+    return service.delete(id_)
 ```
 
 ---
@@ -666,11 +611,8 @@ JWT_SECRET_KEY=change-me
 JWT_ALGORITHM=HS256
 JWT_ACCESS_TOKEN_EXPIRE_MINUTES=60
 
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=
-POSTGRES_DB=app
+# Sqlite default — replace with a Postgres URL for prod
+DATABASE_URL=sqlite:///./app.db
 ```
 
 ---
@@ -683,7 +625,7 @@ target-version = "py311"
 
 [lint]
 select = ["E", "F", "I", "B", "UP"]
-ignore = ["E501"]
+ignore = ["E501", "B008"]
 
 [format]
 quote-style = "single"

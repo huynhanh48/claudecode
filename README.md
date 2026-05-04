@@ -12,7 +12,7 @@ Reusable [Claude Code](https://claude.com/claude-code) configuration for **Pytho
     ├── README.md                          # full guide
     ├── settings.json                      # MCP enables + hooks + permissions (committed)
     ├── rules/                             # short, opinionated rule files
-    │   ├── architecture.md                #   layered backend (routes → ... → models)
+    │   ├── architecture.md                #   4-layer backend (routes → services → repositories → models)
     │   ├── coding-style.md                #   type hints, naming, function size
     │   ├── feature-development.md         #   patterns-first workflow
     │   ├── testing.md                     #   pytest + 80% coverage + TDD
@@ -88,9 +88,26 @@ claude mcp list
 
 All four MCP servers should report **connected**. If `fetch` fails, confirm `uvx --version` works in your shell.
 
+## Architecture this config enforces
+
+Four layers, no separate Controller — the FastAPI route handler **is** the controller:
+
+```
+routes/<r>.py     →  services/<r>.py   →  repositories/<r>.py  →  models/<r>.py
+                     (business logic)     (SQLAlchemy queries)    (ORM)
+```
+
+Sidecars: `schema/` (Pydantic), `integrations/` (Adapter around 3rd-party SDKs), `exception/`, `lib/`, `core/`, `db/`.
+
+Pattern follows [`zhanymkanov/fastapi-best-practices`](https://github.com/zhanymkanov/fastapi-best-practices) and the official `bigger-applications` tutorial. See `.claude/rules/architecture.md` for the full rulebook.
+
+`main.py` ships **three global exception handlers** (`HttpException`, `SQLAlchemyError`, `Exception`) so service code never needs `try/except Exception` to log + re-raise — let unexpected errors propagate; the catch-all handler returns a generic 500 with traceback logged. `validate.sh` warns on broad `except Exception` in `app/services/`.
+
+> **Migrating from a 5-layer project?** Delete `app/controllers/`, replace `Depends(<R>Controller)` → `Depends(<R>Service)` in routes, and add the third `@app.exception_handler(Exception)` to `main.py`. `validate.sh` flags any leftover `app/controllers/` directory.
+
 ## Customizing per project
 
-- The rules and skills assume the layered FastAPI architecture (`app/` → `routes/controllers/services/repositories/models`). If your project has a different shape, fork the affected rule file and document why.
+- The rules and skills assume the **4-layer** FastAPI architecture above. If your project has a different shape, fork the affected rule file and document why.
 - If your project uses `uv` / `poetry` / `pdm` instead of `pip`, add the matching pattern to `.claude/settings.json` `permissions.allow` (e.g. `"Bash(uv *)"`).
 - **Per-developer overrides** go in `.claude/settings.local.json` (gitignored). A heavily-commented starter is shipped at `.claude/settings.local.json.example` — copy it and edit:
 

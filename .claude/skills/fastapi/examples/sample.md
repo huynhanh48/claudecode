@@ -6,7 +6,7 @@ Resource singular: `book` · plural: `books` · class: `Book`.
 
 ---
 
-## Files created (exactly six + 2 wiring edits)
+## Files created (exactly five + 2 wiring edits)
 
 ### 1. `app/models/book.py`
 
@@ -32,7 +32,6 @@ class Book(Base, DateTime):
 
 ```python
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -41,14 +40,14 @@ class BookCreate(BaseModel):
     title: str
     author: str
     year: int = Field(ge=0, le=9999)
-    summary: Optional[str] = None
+    summary: str | None = None
 
 
 class BookUpdate(BaseModel):
-    title: Optional[str] = None
-    author: Optional[str] = None
-    year: Optional[int] = Field(default=None, ge=0, le=9999)
-    summary: Optional[str] = None
+    title: str | None = None
+    author: str | None = None
+    year: int | None = Field(default=None, ge=0, le=9999)
+    summary: str | None = None
 
 
 class BookResponse(BaseModel):
@@ -56,7 +55,7 @@ class BookResponse(BaseModel):
     title: str
     author: str
     year: int
-    summary: Optional[str] = None
+    summary: str | None = None
     deleted: bool
     created_at: datetime
     updated_at: datetime
@@ -67,8 +66,6 @@ class BookResponse(BaseModel):
 ### 3. `app/repositories/book.py`
 
 ```python
-from typing import List, Optional
-
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
@@ -80,7 +77,7 @@ class BookRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def get_all(self, skip: int = 0, limit: int = 100) -> List[Book]:
+    def get_all(self, skip: int = 0, limit: int = 100) -> list[Book]:
         return (
             self.db.query(Book)
             .filter(Book.deleted.is_(False))
@@ -90,14 +87,14 @@ class BookRepository:
             .all()
         )
 
-    def get_by_id(self, book_id: int) -> Optional[Book]:
+    def get_by_id(self, book_id: int) -> Book | None:
         return (
             self.db.query(Book)
             .filter(Book.id == book_id, Book.deleted.is_(False))
             .first()
         )
 
-    def search_by_author(self, author: str) -> List[Book]:
+    def search_by_author(self, author: str) -> list[Book]:
         return (
             self.db.query(Book)
             .filter(Book.deleted.is_(False), Book.author.ilike(f'%{author.strip()}%'))
@@ -112,7 +109,7 @@ class BookRepository:
         self.db.refresh(book)
         return book
 
-    def update(self, book_id: int, data: BookUpdate) -> Optional[Book]:
+    def update(self, book_id: int, data: BookUpdate) -> Book | None:
         book = self.get_by_id(book_id)
         if not book:
             return None
@@ -122,7 +119,7 @@ class BookRepository:
         self.db.refresh(book)
         return book
 
-    def delete(self, book_id: int) -> Optional[Book]:
+    def delete(self, book_id: int) -> Book | None:
         book = self.get_by_id(book_id)
         if not book:
             return None
@@ -134,8 +131,6 @@ class BookRepository:
 ### 4. `app/services/book.py`
 
 ```python
-from typing import List
-
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
@@ -150,7 +145,7 @@ class BookService:
         self.db = db
         self.repository = BookRepository(db=self.db)
 
-    def get_all(self, skip: int = 0, limit: int = 100) -> List[BookResponse]:
+    def get_all(self, skip: int = 0, limit: int = 100) -> list[BookResponse]:
         return [
             BookResponse.model_validate(b)
             for b in self.repository.get_all(skip=skip, limit=limit)
@@ -162,7 +157,7 @@ class BookService:
             raise NotFoundException(message='Book not found')
         return BookResponse.model_validate(book)
 
-    def search_by_author(self, author: str) -> List[BookResponse]:
+    def search_by_author(self, author: str) -> list[BookResponse]:
         return [
             BookResponse.model_validate(b)
             for b in self.repository.search_by_author(author)
@@ -183,79 +178,45 @@ class BookService:
         return {'message': 'Book deleted'}
 ```
 
-### 5. `app/controllers/book.py`
+### 5. `app/routes/book.py`
 
 ```python
-from fastapi import Depends
-
-from app.schema.book import BookCreate, BookUpdate
-from app.services.book import BookService
-
-
-class BookController:
-    def __init__(self, service: BookService = Depends()):
-        self.service = service
-
-    def get_all(self, skip: int = 0, limit: int = 100):
-        return self.service.get_all(skip=skip, limit=limit)
-
-    def get_by_id(self, book_id: int):
-        return self.service.get_by_id(book_id)
-
-    def search_by_author(self, author: str):
-        return self.service.search_by_author(author)
-
-    def create(self, data: BookCreate):
-        return self.service.create(data)
-
-    def update(self, book_id: int, data: BookUpdate):
-        return self.service.update(book_id, data)
-
-    def delete(self, book_id: int):
-        return self.service.delete(book_id)
-```
-
-### 6. `app/routes/book.py`
-
-```python
-from typing import List
-
 from fastapi import APIRouter, Depends
 
-from app.controllers.book import BookController
 from app.schema.book import BookCreate, BookResponse, BookUpdate
+from app.services.book import BookService
 
 bookRouter = APIRouter(tags=['books'])
 
 
-@bookRouter.get('/', response_model=List[BookResponse], summary='List books')
-def list_books(skip: int = 0, limit: int = 100, controller: BookController = Depends()):
-    return controller.get_all(skip=skip, limit=limit)
+@bookRouter.get('/', response_model=list[BookResponse], summary='List books')
+def list_books(skip: int = 0, limit: int = 100, service: BookService = Depends()):
+    return service.get_all(skip=skip, limit=limit)
 
 
-@bookRouter.get('/search', response_model=List[BookResponse], summary='Search books by author')
-def search_books(author: str, controller: BookController = Depends()):
-    return controller.search_by_author(author)
+@bookRouter.get('/search', response_model=list[BookResponse], summary='Search books by author')
+def search_books(author: str, service: BookService = Depends()):
+    return service.search_by_author(author)
 
 
 @bookRouter.get('/{book_id}', response_model=BookResponse, summary='Get book by id')
-def get_book(book_id: int, controller: BookController = Depends()):
-    return controller.get_by_id(book_id)
+def get_book(book_id: int, service: BookService = Depends()):
+    return service.get_by_id(book_id)
 
 
 @bookRouter.post('/', response_model=BookResponse, summary='Create book')
-def create_book(data: BookCreate, controller: BookController = Depends()):
-    return controller.create(data)
+def create_book(data: BookCreate, service: BookService = Depends()):
+    return service.create(data)
 
 
 @bookRouter.put('/{book_id}', response_model=BookResponse, summary='Update book')
-def update_book(book_id: int, data: BookUpdate, controller: BookController = Depends()):
-    return controller.update(book_id, data)
+def update_book(book_id: int, data: BookUpdate, service: BookService = Depends()):
+    return service.update(book_id, data)
 
 
 @bookRouter.delete('/{book_id}', summary='Delete book')
-def delete_book(book_id: int, controller: BookController = Depends()):
-    return controller.delete(book_id)
+def delete_book(book_id: int, service: BookService = Depends()):
+    return service.delete(book_id)
 ```
 
 ---
@@ -302,8 +263,6 @@ def _payload(**overrides):
 
 
 def test_create_book_returns_200_and_body(client):
-    # FastAPI returns 200 by default for POST unless the route declares
-    # status_code=201. Pick one and stay consistent across the project.
     response = client.post('/api/books/', json=_payload())
     assert response.status_code == 200
     body = response.json()
@@ -312,7 +271,6 @@ def test_create_book_returns_200_and_body(client):
 
 
 def test_create_book_validation_error_on_bad_year(client):
-    # year < 0 or > 9999 fails Field(ge=0, le=9999) → 422.
     response = client.post('/api/books/', json=_payload(year=-1))
     assert response.status_code == 422
 
@@ -347,7 +305,6 @@ def test_delete_book_soft_deletes(client):
     response = client.delete(f'/api/books/{created["id"]}')
     assert response.status_code == 200
     assert response.json() == {'message': 'Book deleted'}
-    # subsequent GET returns 404 because the row is soft-deleted
     assert client.get(f'/api/books/{created["id"]}').status_code == 404
 ```
 
@@ -358,7 +315,7 @@ def test_delete_book_soft_deletes(client):
 ```
 feat(book): add CRUD endpoints for books
 
-- model, schema, repository, service, controller, route
+- model, schema, repository, service, route
 - alembic migration
 - pytest coverage for happy path, 404, and validation error
 ```

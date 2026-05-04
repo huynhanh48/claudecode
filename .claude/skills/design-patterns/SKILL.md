@@ -191,7 +191,7 @@ After applying a pattern:
 
 ## Extension Points
 
-1. **Domain-specific patterns** — document patterns recurring in your codebase (e.g., the Repository + Service + Controller layering used in this project's `app/` tree).
+1. **Domain-specific patterns** — document patterns recurring in your codebase (e.g., the Route + Service + Repository layering used in this project's `app/` tree).
 2. **Pattern combinations** — Command + Memento for undo/redo; Strategy + Factory for runtime selection; Decorator + Adapter for legacy wrapping.
 3. **Refactoring catalog** — collect before/after snippets in `references/refactorings.md` (create as needed) when you discover one that helps the team.
 

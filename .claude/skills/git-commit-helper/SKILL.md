@@ -113,9 +113,9 @@ build(docker): add multi-stage build for prod image
 
 ## Layering-aware commits
 
-Because the codebase is strictly layered (routes → controllers → services → repositories → models), a feature commit usually touches **all six** files. That's still one commit if the change is one feature.
+Because the codebase is strictly layered (routes → services → repositories → models), a feature commit usually touches **all five** files (model, schema, repository, service, route). That's still one commit if the change is one feature.
 
-Don't split a layered feature into "feat(model): ...", "feat(repo): ...", "feat(service): ..." — that produces six broken intermediate commits. The whole vertical slice ships together.
+Don't split a layered feature into "feat(model): ...", "feat(repo): ...", "feat(service): ..." — that produces five broken intermediate commits. The whole vertical slice ships together.
 
 ## Checklist before `git commit`
 
@@ -174,9 +174,9 @@ Same title format as the commit. Body answers:
    git commit -m "$(cat <<'EOF'
    feat(book): add CRUD endpoints for books
 
-   Six-layer scaffold (model → schema → repo → service → controller →
-   route) plus alembic migration and pytest coverage for the standard
-   404/422/200/auth cases.
+   Five-layer scaffold (model → schema → repo → service → route) plus
+   alembic migration and pytest coverage for the standard 404/422/200/auth
+   cases.
    EOF
    )"
    ```

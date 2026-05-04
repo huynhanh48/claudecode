@@ -41,7 +41,7 @@ paths:
 
 - Always parameterized queries (SQLAlchemy ORM does this for you).
 - Soft-delete (`deleted=True`) for user-facing data; hard-delete only via explicit admin action.
-- No raw SQL strings in services or controllers — see `architecture.md`.
+- No raw SQL strings in services or routes — see `architecture.md`.
 - Migrations are reviewed: never `DROP TABLE` or `ALTER COLUMN ... TYPE` without a documented reason.
 
 ## HTTP responses
